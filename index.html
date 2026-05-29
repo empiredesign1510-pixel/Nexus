@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="id" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NexusTrade | Quant Terminal</title>
+    
+    <!-- Dependencies -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind Config -->
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { 
+                        sans: ['Space Grotesk', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace']
+                    },
+                    colors: {
+                        dark: { bg: '#0a0a0a', card: '#121212', border: '#262626' },
+                        light: { bg: '#f8f9fa', card: '#ffffff', border: '#e5e7eb' },
+                        primary: '#3b82f6',
+                        profit: '#10b981',
+                        loss: '#f43f5e',
+                    },
+                    boxShadow: {
+                        'neo-light': '4px 4px 0px 0px rgba(0,0,0,1)',
+                        'neo-dark': '4px 4px 0px 0px rgba(255,255,255,0.1)',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { transition: background-color 0.3s, color 0.3s; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #52525b; border-radius: 10px; }
+        .terminal-panel { transition: all 0.2s ease-in-out; }
+        input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.5); cursor: pointer; }
+        .dark input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
+        /* Animasi Loading */
+        .loader { border: 3px solid rgba(255,255,255,0.1); border-top: 3px solid #3b82f6; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-light-bg text-gray-900 dark:bg-dark-bg dark:text-gray-100 min-h-screen selection:bg-primary selection:text-white">
+    
+    <!-- Root tempat React akan dirender -->
+    <div id="root">
+        <div class="flex flex-col items-center justify-center min-h-screen">
+            <div class="loader mb-4"></div>
+            <p class="font-mono text-sm text-gray-500 tracking-widest uppercase">Initializing System...</p>
+        </div>
+    </div>
+
+    <!-- 1. SCRIPT MODULE NATIVE UNTUK FIREBASE (Menghindari Error Babel) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, onSnapshot, doc, setDoc, addDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Mengekspos fungsi Firebase ke objek Window agar bisa dibaca oleh React
+        window.fbSDK = {
+            initializeApp, getAuth, signInAnonymously, onAuthStateChanged,
+            getFirestore, collection, onSnapshot, doc, setDoc, addDoc, deleteDoc
+        };
+
+        // Memberi sinyal bahwa Firebase siap digunakan
+        window.dispatchEvent(new Event('firebaseReady'));
+    </script>
+
+    <!-- 2. SCRIPT REACT & APLIKASI -->
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+
+        // Kredensial Firebase Anda
+        const firebaseConfig = {
+            apiKey: "AIzaSyBFVkWSwBzAV8vAEe9RByt56S0rvgoq6m4",
+            authDomain: "nexustrade-7ff38.firebaseapp.com",
+            projectId: "nexustrade-7ff38",
+            storageBucket: "nexustrade-7ff38.firebasestorage.app",
+            messagingSenderId: "1023740831053",
+            appId: "1:1023740831053:web:a102127bb7f2852b064304"
+        };
+
+        let auth, db, fb;
+
+        // --- ICONS ---
+        const IconSun = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>;
+        const IconMoon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>;
+        const IconActivity = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg>;
+
+        function App() {
+            const [user, setUser] = useState(null);
+            const [isDarkMode, setIsDarkMode] = useState(true);
+            const [capital, setCapital] = useState(1000);
+            const [trades, setTrades] = useState([]);
+            const [isLoading, setIsLoading] = useState(true);
+            const [errorMsg, setErrorMsg] = useState('');
+
+            // Form States
+            const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+            const [profit, setProfit] = useState('');
+            const [loss, setLoss] = useState('');
+            const [strategy, setStrategy] = useState('Scalping');
+
+            // Toggle Tema
+            useEffect(() => {
+                const root = document.documentElement;
+                if (isDarkMode) root.classList.add('dark');
+                else root.classList.remove('dark');
+            }, [isDarkMode]);
+
+            // Setup Autentikasi Firebase
+            useEffect(() => {
+                const signIn = async () => {
+                    try {
+                        await fb.signInAnonymously(auth);
+                    } catch (error) {
+                        console.error("Auth Error:", error);
+                        setErrorMsg("Gagal koneksi server. Pastikan Anda terkoneksi internet & Firebase Rules aktif.");
+                        setIsLoading(false);
+                    }
+                };
+                signIn();
+
+                const unsubscribe = fb.onAuthStateChanged(auth, (usr) => {
+                    setUser(usr);
+                    if(!usr) setIsLoading(false);
+                });
+                return () => unsubscribe();
+            }, []);
+
+            // Ambil Data Firestore Real-time
+            useEffect(() => {
+                if (!user) return;
+
+                const tradesRef = fb.collection(db, 'users', user.uid, 'trades');
+                const capitalRef = fb.doc(db, 'users', user.uid, 'settings');
+
+                setIsLoading(true);
+
+                const unsubTrades = fb.onSnapshot(tradesRef, (snapshot) => {
+                    const data = [];
+                    snapshot.forEach(d => data.push({ id: d.id, ...d.data() }));
+                    data.sort((a, b) => new Date(a.date) - new Date(b.date));
+                    setTrades(data);
+                    setIsLoading(false);
+                }, (err) => {
+                    console.error("Firestore read error:", err);
+                    setErrorMsg("Akses ditolak. Atur 'Rules' Firestore Anda menjadi: allow read, write: if true; (untuk testing)");
+                    setIsLoading(false);
+                });
+
+                const unsubCapital = fb.onSnapshot(capitalRef, (docSnap) => {
+                    if (docSnap.exists() && docSnap.data().capital !== undefined) {
+                        setCapital(docSnap.data().capital);
+                    }
+                });
+
+                return () => { unsubTrades(); unsubCapital(); };
+            }, [user]);
+            // Fungsi Tambah Jurnal
+            const handleAddTrade = async (e) => {
+                e.preventDefault();
+                setErrorMsg('');
+                const p = parseFloat(profit) || 0;
+                const l = parseFloat(loss) || 0;
+                
+                if (p === 0 && l === 0) {
+                    setErrorMsg('Isi nominal Profit atau Loss terlebih dahulu.');
+                    return;
+                }
+                
+                const newTrade = { date, profit: p, loss: l, strategy, timestamp: Date.now() };
+
+                try {
+                    const tradesRef = fb.collection(db, 'users', user.uid, 'trades');
+                    await fb.addDoc(tradesRef, newTrade);
+                    setProfit(''); setLoss('');
+                } catch (error) {
+                    console.error("Write error:", error);
+                    setErrorMsg("Gagal menyimpan data ke Cloud.");
+                }
+            };
+
+            // Fungsi Hapus Jurnal
+            const handleDelete = async (id) => {
+                try {
+                    await fb.deleteDoc(fb.doc(db, 'users', user.uid, 'trades', id));
+                } catch (error) {
+                    console.error("Delete error:", error);
+                }
+            };
+
+            // Fungsi Update Modal
+            const saveCapital = async (newCapital) => {
+                if (!user) return;
+                try {
+                    await fb.setDoc(fb.doc(db, 'users', user.uid, 'settings'), { capital: newCapital }, { merge: true });
+                } catch (error) {
+                    console.error("Capital save error:", error);
+                }
+            };
+
+            // Perhitungan Statistik
+            const stats = useMemo(() => {
+                let totalP = 0, totalL = 0;
+                let strategyCount = {};
+
+                trades.forEach(t => {
+                    totalP += t.profit;
+                    totalL += t.loss;
+                    const net = t.profit - t.loss;
+                    strategyCount[t.strategy] = (strategyCount[t.strategy] || 0) + net;
+                });
+
+                const netResult = totalP - totalL;
+                const percentage = capital > 0 ? ((netResult / capital) * 100) : 0;
+                const winDays = trades.filter(t => t.profit > t.loss).length;
+                
+                let bestStrat = '-';
+                let maxVal = -Infinity;
+                for (let s in strategyCount) {
+                    if (strategyCount[s] > maxVal) { maxVal = strategyCount[s]; bestStrat = s; }
+                }
+
+                return { totalP, totalL, netResult, percentage, winDays, bestStrat };
+            }, [trades, capital]);
+
+            // Mesin AI Evaluator
+            const aiEvaluation = useMemo(() => {
+                if (trades.length < 3) return { status: "KALIBRASI", text: "Kumpulkan min. 3 log trading untuk mengaktifkan AI Evaluator.", color: "text-gray-500" };
+                const { netResult, percentage, winDays, bestStrat } = stats;
+                const winRate = (winDays / trades.length) * 100;
+
+                if (netResult < 0) {
+                    if (winRate > 50) return { status: "RISK WARNING", text: `Win rate bagus (${winRate.toFixed(1)}%) tapi Anda masih Minus. Rasio Risk/Reward Anda bocor, jangan TP (Take Profit) terlalu cepat.`, color: "text-loss" };
+                    return { status: "SYSTEM DRAWDOWN", text: `Sistem mendeteksi drawdown serius. Kurangi volume lot 50%. Strategi ${bestStrat} perlu dievaluasi ulang.`, color: "text-loss" };
+                } else if (percentage > 0 && percentage < 5) {
+                    return { status: "STABIL", text: `Modal bertumbuh ${percentage.toFixed(2)}%. Parameter stabil, algoritma trading Anda berfungsi. Hindari overtrading hari ini.`, color: "text-primary" };
+                } else {
+                    return { status: "ALPHA OPTIMAL", text: `Performa Superior (${percentage.toFixed(2)}%). Setup strategi ${bestStrat} bekerja sempurna di market saat ini. Pertahankan disiplin!`, color: "text-profit" };
+                }
+            }, [stats, trades]);
+
+            // Render Grafik (Chart.js)
+            const chartRef = useRef(null);
+            const canvasRef = useRef(null);
+
+            useEffect(() => {
+                if (!canvasRef.current) return;
+                if (chartRef.current) chartRef.current.destroy();
+
+                let cumulative = capital;
+                const labels = ['Start'];
+                const dataPoints = [capital];
+
+                trades.forEach(t => {
+                    cumulative += (t.profit - t.loss);
+                    labels.push(t.date.slice(5)); 
+                    dataPoints.push(cumulative);
+                });
+
+                const ctx = canvasRef.current.getContext('2d');
+                const isProfitTrend = cumulative >= capital;
+                const lineColor = isProfitTrend ? '#10b981' : (cumulative < capital ? '#f43f5e' : '#3b82f6');
+                const gridColor = isDarkMode ? '#262626' : '#e5e7eb';
+                const textColor = isDarkMode ? '#9ca3af' : '#4b5563';
+
+                chartRef.current = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            data: dataPoints,
+                            borderColor: lineColor,
+                            borderWidth: 2,
+                            pointBackgroundColor: isDarkMode ? '#0a0a0a' : '#ffffff',
+                            pointBorderColor: lineColor,
+                            pointBorderWidth: 2,
+                            pointRadius: 4,
+                            pointHoverRadius: 6,
+                            tension: 0.1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false }, tooltip: {
+                            backgroundColor: isDarkMode ? '#121212' : '#ffffff',
+                            titleColor: isDarkMode ? '#fff' : '#000',
+                            bodyColor: isDarkMode ? '#fff' : '#000',
+                            borderColor: gridColor,
+                            borderWidth: 1,
+                            displayColors: false,
+                            callbacks: { label: (ctx) => `$${ctx.raw.toFixed(2)}` }
+                        }},
+                        scales: {
+                            y: { grid: { color: gridColor }, ticks: { color: textColor, font: { family: 'JetBrains Mono' } } },
+                            x: { grid: { display: false }, ticks: { color: textColor, maxTicksLimit: 8, font: { family: 'JetBrains Mono' } } }
+                        }
+                    }
+                });
+            }, [trades, capital, isDarkMode]);
+
+            return (
+                <div className="max-w-7xl mx-auto p-4 md:p-8 font-sans">
+                    
+                    <header className="flex flex-col md:flex-row justify-between items-start md:items-end mb-10 gap-6 border-b-2 border-light-border dark:border-dark-border pb-6">
+                        <div>
+                            <div className="flex items-center gap-3 mb-2">
+                                <div className="w-3 h-3 rounded-none bg-primary"></div>
+                                <h1 className="text-2xl md:text-3xl font-bold uppercase tracking-tight">Nexus<span className="font-light">Trade</span></h1>
+                            </div>
+                            <p className="text-sm text-gray-500 font-mono tracking-widest uppercase">ID: {user ? user.uid.substring(0,8) : 'CONNECTING...'} // ONLINE</p>
+                        </div>
+
+                        <div className="flex items-center gap-4 w-full md:w-auto">
+                            <div className="terminal-panel bg-light-card dark:bg-dark-card border-2 border-light-border dark:border-dark-border px-4 py-2 flex items-center gap-3 shadow-neo-light dark:shadow-neo-dark w-full md:w-auto">
+                                <span className="text-xs font-bold uppercase text-gray-500">Capital</span>
+                                <span className="font-mono text-gray-400">$</span>
+                                <input 
+                                    type="number" 
+                                    value={capital}
+                                    onChange={(e) => setCapital(parseFloat(e.target.value) || 0)}
+                                    onBlur={(e) => saveCapital(parseFloat(e.target.value) || 0)}
+                                    className="bg-transparent font-mono font-bold text-xl outline-none w-28 text-gray-900 dark:text-white"
+                                />
+                            </div>
+                            
+                            <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-3 border-2 border-light-border dark:border-dark-border hover:bg-gray-100 dark:hover:bg-dark-border transition-colors bg-light-card dark:bg-dark-card shadow-neo-light dark:shadow-neo-dark">
+                                {isDarkMode ? <IconSun /> : <IconMoon />}
+                            </button>
+                        </div>
+                    </header>
+                     {/* BANNER ERROR TAMPIL DI SINI */}
+                    {errorMsg && (
+                        <div className="mb-8 p-4 bg-loss/10 border-2 border-loss text-loss font-mono text-sm shadow-neo-light dark:shadow-neo-dark">
+                            ⚠️ SYSTEM MSG: {errorMsg}
+                        </div>
+                    )}
+
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-10">
+                        <StatCard title="Gross Profit" value={stats.totalP} type="profit" prefix="+$" />
+                        <StatCard title="Gross Loss" value={stats.totalL} type="loss" prefix="-$" />
+                        <StatCard title="Net P/L" value={Math.abs(stats.netResult)} type={stats.netResult >= 0 ? 'profit' : 'loss'} prefix={stats.netResult >= 0 ? '+$' : '-$'} />
+                        <div className="terminal-panel border-2 border-light-border dark:border-dark-border bg-light-card dark:bg-dark-card p-5 flex flex-col justify-between shadow-neo-light dark:shadow-neo-dark">
+                            <span className="text-xs font-bold uppercase text-gray-500 tracking-wider">Growth</span>
+                            <div className="flex items-baseline gap-2 mt-2">
+                                <span className={`font-mono text-2xl md:text-3xl font-bold ${stats.percentage >= 0 ? 'text-profit' : 'text-loss'}`}>
+                                    {stats.percentage > 0 ? '+' : ''}{stats.percentage.toFixed(2)}%
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                        <div className="lg:col-span-4 flex flex-col gap-8">
+                            <div className="border-2 border-light-border dark:border-dark-border bg-light-card dark:bg-dark-card p-5 relative overflow-hidden shadow-neo-light dark:shadow-neo-dark">
+                                <div className="flex justify-between items-center mb-4 border-b border-light-border dark:border-dark-border pb-2">
+                                    <span className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><IconActivity /> Sys.Eval</span>
+                                    <span className={`text-[10px] font-mono border px-1 ${aiEvaluation.status.includes('WARNING') || aiEvaluation.status.includes('DRAWDOWN') ? 'border-loss text-loss' : aiEvaluation.status.includes('OPTIMAL') ? 'border-profit text-profit' : 'border-gray-500 text-gray-500'}`}>
+                                        {aiEvaluation.status}
+                                    </span>
+                                </div>
+                                <p className="font-mono text-sm leading-relaxed text-gray-700 dark:text-gray-300">
+                                    <span className="text-primary mr-2">&gt;</span>{aiEvaluation.text}
+                                </p>
+                            </div>
+
+                            <div className="border-2 border-light-border dark:border-dark-border bg-light-card dark:bg-dark-card p-5 shadow-neo-light dark:shadow-neo-dark">
+                                <span className="text-xs font-bold uppercase text-gray-500 mb-6 block border-b border-light-border dark:border-dark-border pb-2">Execute Trade Log</span>
+                                <form onSubmit={handleAddTrade} className="space-y-5">
+                                    <div>
+                                        <label className="text-[10px] font-mono text-gray-500 uppercase block mb-1">Date</label>
+                                        <input type="date" required value={date} onChange={e => setDate(e.target.value)} className="w-full bg-transparent border-2 border-light-border dark:border-dark-border p-2 focus:border-primary outline-none font-mono text-sm" />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="text-[10px] font-mono text-gray-500 uppercase block mb-1">Profit</label>
+                                            <div className="relative">
+                                                <span className="absolute left-3 top-2 font-mono text-gray-500">$</span>
+                                                <input type="number" step="0.01" min="0" value={profit} onChange={e => setProfit(e.target.value)} className="w-full bg-transparent border-2 border-light-border dark:border-dark-border p-2 pl-7 focus:border-profit outline-none font-mono text-sm text-profit" placeholder="0.00" />
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-mono text-gray-500 uppercase block mb-1">Loss</label>
+                                            <div className="relative">
+                                                <span className="absolute left-3 top-2 font-mono text-gray-500">$</span>
+                                                <input type="number" step="0.01" min="0" value={loss} onChange={e => setLoss(e.target.value)} className="w-full bg-transparent border-2 border-light-border dark:border-dark-border p-2 pl-7 focus:border-loss outline-none font-mono text-sm text-loss" placeholder="0.00" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] font-mono text-gray-500 uppercase block mb-1">Algorithm / Strategy</label>
+                                        <select value={strategy} onChange={e => setStrategy(e.target.value)} className="w-full bg-transparent border-2 border-light-border dark:border-dark-border p-2 focus:border-primary outline-none text-sm appearance-none rounded-none">
+                                            <option className="bg-light-bg dark:bg-dark-bg" value="Scalping">Scalping (HFT)</option>
+                                            <option className="bg-light-bg dark:bg-dark-bg" value="Intraday">Intraday</option>
+                                            <option className="bg-light-bg dark:bg-dark-bg" value="Swing">Swing Position</option>
+                                            <option className="bg-light-bg dark:bg-dark-bg" value="Breakout">Momentum Breakout</option>
+                                            <option className="bg-light-bg dark:bg-dark-bg" value="Price Action">Naked Price Action</option>
+                                        </select>
+                                    </div>
+                                    <button type="submit" disabled={isLoading} className="w-full bg-gray-900 text-white dark:bg-white dark:text-black font-bold uppercase tracking-wider text-sm py-3 hover:bg-primary dark:hover:bg-primary dark:hover:text-white transition-colors disabled:opacity-50">
+                                        {isLoading ? 'SYNCING...' : 'COMMIT LOG'}
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+
+                        <div className="lg:col-span-8 flex flex-col gap-8">
+                            <div className="border-2 border-light-border dark:border-dark-border bg-light-card dark:bg-dark-card p-5 shadow-neo-light dark:shadow-neo-dark">
+                                <div className="flex justify-between items-center mb-6">
+                                    <span className="text-xs font-bold uppercase text-gray-500">Equity Curve</span>
+                                    <div className="flex gap-2">
+                                        <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+                                        <span className="text-[10px] font-mono text-gray-500">LIVE</span>
+                                    </div>
+                                </div>
+                                <div className="w-full h-[250px] md:h-[300px]"><canvas ref={canvasRef}></canvas></div>
+                            </div>
+
+                            <div className="border-2 border-light-border dark:border-dark-border bg-light-card dark:bg-dark-card shadow-neo-light dark:shadow-neo-dark overflow-hidden flex flex-col flex-1 min-h-[300px]">
+                                <div className="p-4 border-b border-light-border dark:border-dark-border"><span className="text-xs font-bold uppercase text-gray-500">Ledger History</span></div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left border-collapse whitespace-nowrap">
+                                        <thead>
+                                            <tr className="bg-gray-50 dark:bg-dark-border/30">
+                                                <th className="py-2 px-4 text-[10px] font-mono text-gray-500 uppercase border-b border-light-border dark:border-dark-border">Date</th>
+                                                <th className="py-2 px-4 text-[10px] font-mono text-gray-500 uppercase border-b border-light-border dark:border-dark-border">Strategy</th>
+                                                <th className="py-2 px-4 text-[10px] font-mono text-gray-500 uppercase border-b border-light-border dark:border-dark-border text-right">Net Return</th>
+                                                <th className="py-2 px-4 text-[10px] font-mono text-gray-500 uppercase border-b border-light-border dark:border-dark-border text-center">CMD</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {trades.length === 0 ? (
+                                                <tr><td colSpan="4" className="py-8 text-center text-sm font-mono text-gray-500">NO DATA FOUND IN CLOUD</td></tr>
+                                            ) : (
+                                                [...trades].sort((a, b) => b.timestamp - a.timestamp).map((trade) => {
+                                                    const net = trade.profit - trade.loss;
+                                                    const isProfit = net >= 0;
+                                                    return (
+                                                        <tr key={trade.id} className="hover:bg-gray-50 dark:hover:bg-dark-border/20 transition-colors group">
+                                                            <td className="py-3 px-4 text-sm font-mono border-b border-light-border dark:border-dark-border">{trade.date}</td>
+                                                            <td className="py-3 px-4 text-sm border-b border-light-border dark:border-dark-border"><span className="border border-gray-300 dark:border-gray-700 px-2 py-0.5 text-xs">{trade.strategy}</span></td>
+                                                            <td className={`py-3 px-4 text-sm font-mono font-bold text-right border-b border-light-border dark:border-dark-border ${isProfit ? 'text-profit' : 'text-loss'}`}>{isProfit ? '+' : '-'}${Math.abs(net).toFixed(2)}</td>
+                                                            <td className="py-3 px-4 text-center border-b border-light-border dark:border-dark-border">
+                                                                <button onClick={() => handleDelete(trade.id)} className="text-gray-400 hover:text-loss opacity-50 group-hover:opacity-100 transition-opacity">
+                                                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square"><path d="M3 6h18M19 6v14H5V6M8 6V4h8v2"/></svg>
+                                               </button>
+                                                            </td>
+                                                        </tr>
+                                                    )
+                                                })
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Komponen Kartu Statistik
+        function StatCard({ title, value, type, prefix }) {
+            const colorClass = type === 'profit' ? 'text-profit' : 'text-loss';
+            return (
+                <div className="terminal-panel border-2 border-light-border dark:border-dark-border bg-light-card dark:bg-dark-card p-5 flex flex-col justify-between shadow-neo-light dark:shadow-neo-dark">
+                    <span className="text-xs font-bold uppercase text-gray-500 tracking-wider">{title}</span>
+                    <div className="mt-2"><span className={`font-mono text-2xl md:text-3xl font-bold ${colorClass}`}>{prefix}{Math.abs(value).toFixed(2)}</span></div>
+                </div>
+            );
+        }
+
+        // Fungsi Untuk Memulai Render Aplikasi
+        const startApp = () => {
+            fb = window.fbSDK;
+            try {
+                const app = fb.initializeApp(firebaseConfig);
+                auth = fb.getAuth(app);
+                db = fb.getFirestore(app);
+            } catch (e) {
+                console.error("Firebase init bypass:", e);
+            }
+            const root = ReactDOM.createRoot(document.getElementById('root'));
+            root.render(<App />);
+        };
+
+        // Tunggu hingga Module Firebase termuat, lalu jalankan React
+        if (window.fbSDK) {
+            startApp();
+        } else {
+            window.addEventListener('firebaseReady', startApp);
+        }
+    </script>
+</body>
+</html>                     
